@@ -1,0 +1,66 @@
+---
+title: "Oblique case gender of indeclinables"
+author: "Kirill Chuprinko"
+format: html
+editor: visual
+---
+
+```{r echo: false}
+source("read_pcibex.R") # get custom function from the other file
+library(tidyverse)
+library(lme4)
+#library(lmerTest)
+#library(optimx)
+#library(multcomp)
+```
+
+## Preparing the data
+
+```{r read and filter out}
+results <- read.pcibex("results.csv")
+# get rid of uninformative columns and rows
+results <- results %>% filter(Label == "sprt" | Label == "judgement")
+results <- filter(results, PennElementType != "PennController")
+results <- dplyr::select(.data = results, -c(EventTime, Comments, Controller.name))
+
+```
+
+```{r mark the typos}
+# we allowed few typos in the stimuli, mark observations with them
+results <- results %>% mutate(typo = ifelse(
+  str_detect(Parameter, "(пенсе|бесопкоит|вегетерианцев|хоязйству)") |
+    str_detect(Sentence..or.sentence.MD5., "(пенсе|бесопкоит|вегетерианцев|хоязйству)"),
+  1, 0
+))
+```
+
+```{r split the dataset}
+# we have a few tasks in the dataset: sprt, comprehension questions, acceptability judgement
+# let's divide the observations into 3 datasets for convenience
+
+sprt <- results %>% filter(Label == "sprt")
+judgement <- results %>% filter(Label == "judgement")
+rm(results) # remove the original dataset
+
+comprehension_questions <- sprt %>% filter(PennElementName == "Question")
+sprt <- sprt %>% filter(PennElementType == "Controller-DashedSentence")
+```
+
+```{r}
+####### demographic data overview
+demog <- sprt %>% distinct(Results.reception.time, MD5.hash.of.participant.s.IP.address, sex, age)
+# кто-то один не указал возраст :-(
+demog <- na.omit(demog)
+
+demog %>%
+  ggplot(aes(x = age, fill = sex)) +
+  geom_histogram(bins = nrow(demog)) +
+  geom_vline(xintercept = mean(demog$age), col = "red", lwd = .5) +
+  annotate("text",
+    x = mean(demog$age) * 1.4, y = 5,
+    label = paste("Mean =", mean(demog$age), "\n std = ", sd(demog$age)),
+    col = "red",
+    size = 3
+  ) +
+  ylab("count")
+```
