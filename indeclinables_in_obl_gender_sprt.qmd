@@ -3,15 +3,16 @@ title: "Oblique case gender of indeclinables"
 author: "Kirill Chuprinko"
 format: html
 editor: visual
+execute: 
+  warning: false
+  echo: true
 ---
 
-```{r echo: false}
+```{r}
+#| echo: false
 source("read_pcibex.R") # get custom function from the other file
 library(tidyverse)
 library(lme4)
-#library(lmerTest)
-#library(optimx)
-#library(multcomp)
 ```
 
 ## Preparing the data
@@ -46,6 +47,8 @@ comprehension_questions <- sprt %>% filter(PennElementName == "Question")
 sprt <- sprt %>% filter(PennElementType == "Controller-DashedSentence")
 ```
 
+## Demographic data
+
 ```{r}
 ####### demographic data overview
 demog <- sprt %>% distinct(Results.reception.time, MD5.hash.of.participant.s.IP.address, sex, age)
@@ -56,11 +59,191 @@ demog %>%
   ggplot(aes(x = age, fill = sex)) +
   geom_histogram(bins = nrow(demog)) +
   geom_vline(xintercept = mean(demog$age), col = "red", lwd = .5) +
+  scale_fill_manual(values=c("#69b3a2", "#404080")) +
   annotate("text",
-    x = mean(demog$age) * 1.4, y = 5,
+    x = mean(demog$age) * 1.3, y = 8.5,
     label = paste("Mean =", mean(demog$age), "\n std = ", sd(demog$age)),
     col = "red",
     size = 3
   ) +
   ylab("count")
+```
+
+## Comprehension questions
+
+```{r}
+######## check comprehension question stats
+comprehension_questions <- comprehension_questions %>%
+  rename(RT = Newline., correct = Reading.time)
+comprehension_questions$correct <- as.numeric(comprehension_questions$correct)
+
+# 32 is total number of questions
+comprehension_questions %>%
+  group_by(Results.reception.time, MD5.hash.of.participant.s.IP.address) %>%
+  summarise(n_correct = sum(correct), share_correct = sum(correct) / 32) %>%
+  arrange(n_correct)
+```
+
+## Self-paced reading task
+
+```{r cleaning}
+####### reading time in sprt
+sprt <- sprt %>%
+  filter(type != "filler") %>%
+  rename(region = Parameter, rt1 = Reading.time)
+
+# some really strange bug but it concerns only the final region, so doesn't really matter
+sprt <- sprt %>% filter(rt1 != "NaN")
+
+## delete stimuli with typos
+sprt <- sprt %>% filter(typo == 0)
+```
+
+```{r outliers}
+# statistics on RT
+sprt <- sprt %>% mutate_at(c("region", "rt1"), as.numeric)
+sprt %>% summarise(mean(rt1), sd(rt1), min(rt1), max(rt1))
+
+
+```
+
+```{r}
+clean_outliers <- function(x) {
+  y <- droplevels(subset(x, x$rt1 > 100 & x$rt1 < 3000))
+  y <- droplevels(subset(y, y$rt1 <= mean(y$rt1) + 2.5 * sd(y$rt1) & y$rt1 >= mean(y$rt1) - 2.5 * sd(y$rt1)))
+  return(y)
+}
+
+# let's change "gender" feature notation: making fem vs non_fem
+sprt <- sprt %>% mutate(gender = ifelse(gender == "n" | gender == "m", "non_fem", "fem"))
+
+# clean the data
+outliers <- split(sprt, paste(sprt$region, sprt$case, sprt$gender))
+outliers <- lapply(outliers, clean_outliers)
+clean_data <- do.call("rbind", outliers)
+
+# 24*9*0.85 = 183.6 #24 stimuli, 9 regions each
+clean_data %>%
+  group_by(Results.reception.time, MD5.hash.of.participant.s.IP.address) %>%
+  filter(n() > 183) -> clean_data # exclude answers of people, for whom we deleted more than 15% of data
+
+clean_data %>%
+  distinct(Results.reception.time, MD5.hash.of.participant.s.IP.address) %>%
+  nrow()
+```
+
+```{r rt plot -u}
+### visualize
+# -u nouns
+ggplot(clean_data %>% filter(type %in% c(
+  "acc_fem", "acc_masc_or_neut",
+  "nom_fem_u", "nom_masc_or_neut_u"
+)) %>%
+  group_by(region, type) %>%
+  summarise(mean = mean(rt1), std = sd(rt1))) +
+  geom_line(aes(x = region, y = mean, col = type)) +
+  scale_x_continuous(name = "word number", breaks = c(1:9)) +
+  ylab("Mean reading time") +
+  theme_bw()
+```
+
+```{r rt plot -e}
+#-e nouns
+ggplot(clean_data %>% filter(type %in% c(
+  "dat_fem", "dat_masc_or_neut",
+  "nom_fem_e", "nom_masc_or_neut_e"
+)) %>%
+  group_by(region, type) %>%
+  summarise(mean = mean(rt1), std = sd(rt1))) +
+  geom_line(aes(x = region, y = mean, col = type)) +
+  scale_x_continuous(name = "word number", breaks = c(1:9)) +
+  ylab("Mean reading time") +
+  theme_bw()
+```
+
+## SPRT RT regressions by region
+
+```{r make function}
+sprt_regression <- function(data_set, region_N){
+  lmer(
+    rt1 ~ type + (1 | MD5.hash.of.participant.s.IP.address) + (1 | noun),
+    data_set %>% filter(region == as.character(region_N))
+  ) %>%
+    summary(.)
+}
+
+```
+
+```{r}
+print("-u")
+data_u <- clean_data %>% filter(type %in% c(
+  "acc_fem", "acc_masc_or_neut",
+  "nom_fem_u", "nom_masc_or_neut_u"
+))
+data_u$type <- as.factor(data_u$type) %>% relevel(., ref = "nom_masc_or_neut_u")
+
+# На1 ветке2 мы3 увидели4 какаду5, сверкающего6 своим7 ярким8 оперением9.
+for (N in 6:9) print(sprt_regression(data_u, N))
+
+```
+
+```{r}
+print("-e")
+data_e <- clean_data %>% filter(type %in% c(
+  "dat_fem", "dat_masc_or_neut",
+  "nom_fem_e", "nom_masc_or_neut_e"
+))
+data_e$type <- as.factor(data_e$type) %>% relevel(., ref = "nom_masc_or_neut_e")
+
+for (N in 6:9) print(sprt_regression(data_e, N))
+
+```
+
+## Acceptability judgement
+
+```{r}
+####### Judgements
+judgement <- judgement %>% filter(Value != "NULL")
+judgement <- judgement %>% mutate(gender = ifelse(gender == "n" | gender == "m", "non_fem", "fem"))
+
+judgement %>%
+  group_by(type) %>%
+  summarise(average = mean(as.numeric(Value)), std = sd(as.numeric(Value)))
+
+
+judgement$Value <- factor(judgement$Value, ordered = T)
+
+judgement_u <- judgement %>% filter(type %in% c(
+  "acc_fem", "acc_masc_or_neut",
+  "nom_fem_u", "nom_masc_or_neut_u"
+))
+judgement_u$type <- as.factor(judgement_u$type) %>% relevel(., ref = "nom_masc_or_neut_u")
+
+judgement_e <- judgement %>% filter(type %in% c(
+  "dat_fem", "dat_masc_or_neut",
+  "nom_fem_e", "nom_masc_or_neut_e"
+))
+judgement_e$type <- as.factor(judgement_e$type) %>% relevel(., ref = "nom_masc_or_neut_e")
+```
+
+## Judgement regressions
+
+```{r}
+print("Acceptability within -u nouns")
+glmer(
+  Value ~ type + (1 | MD5.hash.of.participant.s.IP.address)
+    + (1 | noun),
+  judgement_u,
+  family = "binomial"
+) %>%
+  summary(.)
+
+print("Acceptability within -e nouns")
+glmer(
+  Value ~ type + (1 | MD5.hash.of.participant.s.IP.address)
+    + (1 | noun),
+  judgement_e,
+  family = "binomial"
+) %>%
+  summary(.)
 ```
