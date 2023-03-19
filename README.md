@@ -1,2 +1,2 @@
-# Indeclinables_with_oblique_cases_gender_sprt2023
+# Indeclinables with oblique cases gender sprt 2023
  
