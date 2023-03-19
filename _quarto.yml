@@ -1,0 +1,6 @@
+project:
+  type: website
+  output-dir: docs
+  
+website: 
+  title: "indecl_oblcase_gender_sprt"
